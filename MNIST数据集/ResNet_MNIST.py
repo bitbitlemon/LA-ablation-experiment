@@ -19,6 +19,7 @@ def set_seed(seed):
 
 set_seed(42)  # 设置一个固定的随机种子
 
+# 定义BasicBlock
 class BasicBlock(nn.Module):
     expansion = 1
 
@@ -50,6 +51,7 @@ class BasicBlock(nn.Module):
 
         return out
 
+# 定义ResNet
 class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=10):
         super(ResNet, self).__init__()
@@ -101,6 +103,21 @@ class ResNet(nn.Module):
 def resnet18(num_classes):
     return ResNet(BasicBlock, [2, 2, 2, 2], num_classes)
 
+# IOU 计算函数
+def iou(pred, target, n_classes=10):
+    ious = []
+    pred = torch.argmax(pred, dim=1)
+    for cls in range(n_classes):
+        pred_inds = pred == cls
+        target_inds = target == cls
+        intersection = (pred_inds & target_inds).sum().float().item()
+        union = (pred_inds | target_inds).sum().float().item()
+        if union == 0:
+            ious.append(float('nan'))  # 避免除零错误
+        else:
+            ious.append(intersection / union)
+    return np.nanmean(ious)
+
 # 设置数据加载器
 transform = transforms.Compose([
     transforms.ToTensor(),
@@ -120,6 +137,7 @@ num_epochs = 5
 for epoch in range(num_epochs):
     model.train()
     total_loss = 0
+    total_iou = 0
     for inputs, targets in train_loader:
         inputs = inputs.to(torch.float32)
         targets = targets.to(torch.long)
@@ -138,8 +156,11 @@ for epoch in range(num_epochs):
                 param -= learning_rate * param.grad
 
         total_loss += loss.item()
+        total_iou += iou(outputs, targets)
 
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss / len(train_loader)}')
+    avg_loss = total_loss / len(train_loader)
+    avg_iou = total_iou / len(train_loader)
+    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss}, IOU: {avg_iou}')
 
 # 保存模型
 torch.save(model.state_dict(), 'resnet_model.pth')
