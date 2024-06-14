@@ -133,7 +133,7 @@ criterion = nn.CrossEntropyLoss()
 learning_rate = 0.001
 
 # 训练循环
-num_epochs = 5
+num_epochs = 100
 for epoch in range(num_epochs):
     model.train()
     total_loss = 0
