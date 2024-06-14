@@ -59,8 +59,23 @@ class LBFGSAdam(Optimizer):
         # 实现LBFGS特定的计算
         return r + u
 
+# IOU 计算函数
+def iou(pred, target, n_classes=10):
+    ious = []
+    pred = torch.argmax(pred, dim=1)
+    for cls in range(n_classes):
+        pred_inds = pred == cls
+        target_inds = target == cls
+        intersection = (pred_inds & target_inds).sum().float().item()
+        union = (pred_inds | target_inds).sum().float().item()
+        if union == 0:
+            ious.append(float('nan'))  # 避免除零错误
+        else:
+            ious.append(intersection / union)
+    return np.nanmean(ious)
+
 # 定义神经网络
-class CNN(nn.Module):
+class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1)
@@ -97,7 +112,10 @@ num_epochs = 5
 for epoch in range(num_epochs):
     model.train()
     total_loss = 0
+    total_iou = 0
     for inputs, targets in train_loader:
+        inputs, targets = inputs.to(torch.float32), targets.to(torch.long)
+        
         def closure():
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -105,10 +123,19 @@ for epoch in range(num_epochs):
             loss.backward()
             return loss
 
+        # 在closure中调用模型前向传播
         loss = optimizer.step(closure)
+
+        # 再次前向传播以计算IOU
+        with torch.no_grad():
+            outputs = model(inputs)
+            total_iou += iou(outputs, targets)
+
         total_loss += loss.item()
 
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss / len(train_loader)}')
+    avg_loss = total_loss / len(train_loader)
+    avg_iou = total_iou / len(train_loader)
+    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss}, IOU: {avg_iou}')
 
 # 保存模型
 torch.save(model.state_dict(), 'model.pth')
