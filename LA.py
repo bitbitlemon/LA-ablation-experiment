@@ -36,7 +36,7 @@ class LBFGSAdam(Optimizer):
                 exp_avg.mul_(rho1).add_(1 - rho1, grad)
                 
                 # 计算二阶动量的指数加权平均
-                exp_avg_sq.mul_(rho2).addcmul_(1 - rho2, grad, grad)
+                exp_avg_sq.mul_(rho2).addcmul_(1 - rho2, grad, grad)  #逐元素操作（即哈达玛积）
 
                 # 计算修正后的二阶动量
                 denom = exp_avg_sq.sqrt().add_(epsilon)
