@@ -1,102 +1,59 @@
-import torch
-import torch.optim as optim
-
 class LBFGSAdam(optim.Optimizer):
     def __init__(self, params, lr=1e-3, history_size=10):
-        # 初始化优化器，设置学习率和历史记录大小
         defaults = dict(lr=lr, history_size=history_size)
         super(LBFGSAdam, self).__init__(params, defaults)
 
-    def _gather_flat_grad(self):
-        # 收集所有参数的梯度并展平
-        views = []
-        for p in self.param_groups[0]['params']:
-            if p.grad is None:
-                view = p.data.new(p.data.numel()).zero_()
-            else:
-                view = p.grad.data.view(-1)
-            views.append(view)
-        return torch.cat(views, 0)
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            loss = closure()
 
-    def _gather_flat_params(self):
-        # 收集所有参数并展平
-        views = []
-        for p in self.param_groups[0]['params']:
-            view = p.data.view(-1)
-            views.append(view)
-        return torch.cat(views, 0)
+        for group in self.param_groups:
+            lr = group['lr']
+            history_size = group['history_size']
 
-    def _set_flat_params(self, flat_params):
-        # 将展平的参数重新设置回模型参数
-        offset = 0
-        for p in self.param_groups[0]['params']:
-            numel = p.data.numel()
-            p.data.copy_(flat_params[offset:offset + numel].view_as(p.data))
-            offset += numel
-     #根据公式计算 r_t
-    def _calculate_rt(self, flat_params):
-        # 计算 r_t = (∇^2 f( x_t ))^(-1) * ∇f( x_t )
-        grad = self._gather_flat_grad()
-        if 'prev_flat_grad' not in self.state:
-            self.state['prev_flat_grad'] = torch.zeros_like(grad)
-        return grad - self.state['prev_flat_grad']
+            for p in group['params']:
+                if p.grad is None:
+                    continue
 
-    def _forward_pass(self, m, q):
-        # 前向传递
-        for i in range(m):
-            si = self.state['s'][i]
-            yi = self.state['y'][i]
-            alpha = (si.t() @ q) / (yi.t() @ si)
-            q -= alpha * yi
-            self.state['alpha'].append(alpha)
-        return q
+                grad = p.grad.data
+                state = self.state[p]
 
-    def _reverse_pass(self, m, r):
-        # 反向传递
-        for i in range(m-1, -1, -1):
-            si = self.state['s'][i]
-            yi = self.state['y'][i]
-            beta = (yi.t() @ r) / (yi.t() @ si)
-            r += si * (self.state['alpha'][i] - beta)
-        return r
+                if len(state) == 0:
+                    state['step'] = 0
+                    state['exp_avg'] = torch.zeros_like(p.data)
+                    state['exp_avg_sq'] = torch.zeros_like(p.data)
+                    state['s'] = []
+                    state['y'] = []
+                    state['prev_p'] = torch.zeros_like(p.data)
+                    state['prev_grad'] = torch.zeros_like(grad)
 
-    def step(self, closure):
-        # 优化步骤，计算损失并更新参数
-        loss = closure()
+                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+                beta1, beta2 = 0.9, 0.999
 
-        flat_grad = self._gather_flat_grad()
-        flat_params = self._gather_flat_params()
+                state['step'] += 1
 
-        if 'prev_flat_grad' not in self.state:
-            self.state['prev_flat_grad'] = torch.zeros_like(flat_grad)
-            self.state['prev_flat_params'] = torch.zeros_like(flat_params)
-            self.state['s'] = []
-            self.state['y'] = []
-            self.state['alpha'] = []
-            self.state['H0'] = 1.0
+                # Adam part
+                exp_avg.mul_(beta1).add_(1 - beta1, grad)
+                exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
 
-        rt = self._calculate_rt(flat_params)
-        step_size = self.param_groups[0]['lr']
+                bias_correction1 = 1 - beta1 ** state['step']
+                bias_correction2 = 1 - beta2 ** state['step']
 
-        # 前向和反向传递
-        m = len(self.state['s'])
-        q = self._forward_pass(m, rt)
-        direction = self._reverse_pass(m, q)
+                step_size = lr * (bias_correction2 ** 0.5) / bias_correction1
 
-        # 更新参数
-        flat_params -= step_size * direction
-        self._set_flat_params(flat_params)
+                direction = -step_size * exp_avg / (exp_avg_sq.sqrt() + 1e-8)
+                p.data.add_(direction)
+                
+                # LBFGS part
+                if len(state['s']) == history_size:
+                    state['s'].pop(0)
+                    state['y'].pop(0)
 
-        # 存储新的 s 和 y 值
-        self.state['s'].append(flat_params - self.state['prev_flat_params'])
-        self.state['y'].append(flat_grad - self.state['prev_flat_grad'])
+                state['s'].append(p.data - state['prev_p'])
+                state['y'].append(grad - state['prev_grad'])
 
-        # 维护历史记录大小
-        if len(self.state['s']) > self.param_groups[0]['history_size']:
-            self.state['s'].pop(0)
-            self.state['y'].pop(0)
-
-        self.state['prev_flat_grad'].copy_(flat_grad)
-        self.state['prev_flat_params'].copy_(flat_params)
+                state['prev_p'].copy_(p.data)
+                state['prev_grad'].copy_(grad)
 
         return loss
