@@ -1,6 +1,5 @@
 #不用看了不用看了
-#还没写完
-#又又又搞错了
+#添加了牛顿向前向后更新
 import torch
 from torch.optim.optimizer import Optimizer
 
