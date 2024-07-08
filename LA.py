@@ -72,7 +72,7 @@ class LBFGSAdam(Optimizer):
                 denom = exp_avg_sq.sqrt().add_(eps)
                 step_size = lr / denom
 
-                torch.nn.utils.clip_grad_norm_([p], max_grad_norm)
+                torch.nn.utils.clip_grad_norm_([p], max_grad_norm)#梯度裁剪避免爆炸
 
                 with torch.no_grad():
                     p.data.add_(-step_size * exp_avg)
