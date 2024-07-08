@@ -1,11 +1,6 @@
-#不用看了不用看了
-#添加了牛顿向前向后更新
-import torch
-from torch.optim.optimizer import Optimizer
-
 class LBFGSAdam(Optimizer):
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, history_size=10):
-        defaults = dict(lr=lr, betas=betas, eps=eps, history_size=history_size)
+    def __init__(self, params, lr=1e-5, betas=(0.1, 0.999), eps=1e-8, history_size=10, max_grad_norm=1.0):
+        defaults = dict(lr=lr, betas=betas, eps=eps, history_size=history_size, max_grad_norm=max_grad_norm)
         super(LBFGSAdam, self).__init__(params, defaults)
 
     def step(self, closure=None):
@@ -14,75 +9,79 @@ class LBFGSAdam(Optimizer):
             loss = closure()
 
         for group in self.param_groups:
-            lr = group['lr']  # 学习率
-            betas = group['betas']  # Adam优化器的beta1和beta2参数
-            eps = group['eps']  # 为了数值稳定性的小常数
-            history_size = group['history_size']  # LBFGS历史记录大小
+            lr = group['lr']
+            betas = group['betas']
+            eps = group['eps']
+            history_size = group['history_size']
+            max_grad_norm = group['max_grad_norm']
 
             for p in group['params']:
                 if p.grad is None:
                     continue
 
-                grad = p.grad.data  # 获取参数的梯度
+                grad = p.grad.data
                 state = self.state[p]
 
+                # 初始化状态字典
                 if len(state) == 0:
-                    # 初始化状态字典
                     state['step'] = 0
-                    state['exp_avg'] = torch.zeros_like(p.data)  # 一阶矩估计
-                    state['exp_avg_sq'] = torch.zeros_like(p.data)  # 二阶矩估计
-                    state['old_dirs'] = []  # 保存s_i
-                    state['old_stps'] = []  # 保存y_i
+                    state['exp_avg'] = torch.zeros_like(p.data)
+                    state['exp_avg_sq'] = torch.zeros_like(p.data)
+                    state['old_dirs'] = []
+                    state['old_stps'] = []
 
                 exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
                 beta1, beta2 = betas
 
                 state['step'] += 1
 
-                # 更新一阶矩估计
-                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
-                # 更新二阶矩估计
-                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
-
-                # 计算分母并添加小常数以防止除零
-                denom = exp_avg_sq.sqrt().add_(eps)
-
-                if len(state['old_dirs']) > history_size:
-                    # 超过历史记录大小时，移除最旧的记录
-                    state['old_dirs'].pop(0)
-                    state['old_stps'].pop(0)
-
+                # 计算y_k和s_k，并存储到历史记录中
                 if state['step'] > 1:
-                    # 计算y_k和s_k
                     y = grad - state['prev_grad']
                     s = p.data - state['prev_p_data']
-
                     state['old_dirs'].append(y)
                     state['old_stps'].append(s)
 
-                if state['step'] > 1:
-                    # LBFGS前向循环：计算alpha
-                    q = grad.view(-1)
-                    alphas = []
-                    for i in range(len(state['old_dirs']) - 1, -1, -1):
-                        s, y = state['old_stps'][i].view(-1), state['old_dirs'][i].view(-1)
-                        alpha = s.dot(q) / y.dot(s)
-                        q = q - alpha * y
-                        alphas.append(alpha)
+                    if len(state['old_dirs']) > history_size:
+                        state['old_dirs'].pop(0)
+                        state['old_stps'].pop(0)
 
-                    # 计算r
-                    r = torch.mul(q, torch.dot(s, y) / torch.dot(y, y))
+                # LBFGS前向循环：计算alpha和q
+                q = grad.view(-1)
+                alphas = []
+                for i in range(len(state['old_dirs']) - 1, -1, -1):
+                    s, y = state['old_stps'][i].view(-1), state['old_dirs'][i].view(-1)
+                    alpha = s.dot(q) / (y.dot(s) + eps)  # 添加eps以防止数值不稳定
+                    q -= alpha * y
+                    alphas.append(alpha)
 
-                    # LBFGS后向循环：计算beta并更新r
-                    for i in range(len(state['old_dirs'])):
-                        s, y = state['old_stps'][i].view(-1), state['old_dirs'][i].view(-1)
-                        beta = y.dot(r) / s.dot(y)
-                        r = r + s * (alphas[i] - beta)
+                # 初始设置r
+                r = q
+                if len(state['old_dirs']) > 0:
+                    s, y = state['old_stps'][-1].view(-1), state['old_dirs'][-1].view(-1)
+                    r *= y.dot(s) / (y.dot(y) + eps)  # 添加eps以防止数值不稳定
 
-                # 更新参数：元素对应的乘法（Hadamard乘积）
-                p.data.addcdiv_(-lr, exp_avg, denom)
+                # LBFGS后向循环：计算beta并更新r
+                for i in range(len(state['old_dirs'])):
+                    s, y = state['old_stps'][i].view(-1), state['old_dirs'][i].view(-1)
+                    beta = y.dot(r) / (s.dot(y) + eps)  # 添加eps以防止数值不稳定
+                    r += s * (alphas.pop() - beta)
 
-                # 保存当前梯度和参数，用于下一步计算y和s
+                r = r.view_as(grad)
+
+                # 利用LBFGS得到的r代入Adam框架
+                exp_avg.mul_(beta1).add_(r, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(r, r, value=1 - beta2)
+                denom = exp_avg_sq.sqrt().add_(eps)
+                step_size = lr / denom
+
+                # 添加梯度裁剪
+                torch.nn.utils.clip_grad_norm_([p], max_grad_norm)
+
+                with torch.no_grad():
+                    p.data.add_(-step_size * exp_avg)
+
+                # 保存当前梯度和参数
                 state['prev_grad'] = grad.clone()
                 state['prev_p_data'] = p.data.clone()
 
