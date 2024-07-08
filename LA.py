@@ -38,7 +38,7 @@ class LBFGSAdam(Optimizer):
                 if state['step'] > 1:
                     y = grad - state['prev_grad']
                     s = p.data - state['prev_p_data']
-                    y_flat, s_flat = y.view(-1), s.view(-1)  # 将张量扁平化
+                    y_flat, s_flat = y.view(-1), s.view(-1)  # ！将张量扁平化（是为了适应数据集不然会报错）！
                     if y_flat.dot(s_flat) > 1e-10:
                         if len(state['old_dirs']) >= history_size:
                             state['old_dirs'].pop(0)
@@ -63,8 +63,10 @@ class LBFGSAdam(Optimizer):
                     s, y = state['old_stps'][i], state['old_dirs'][i]
                     beta = y.dot(r) / (s.dot(y) + eps)
                     r += s * (alphas.pop() - beta)
+                #！这里的r是基于最近的梯度历史（old_dirs 和 old_stps）计算得出的，这些都是一阶信息！
+                    
 
-                r = r.view_as(grad)
+                r = r.view_as(grad)#！为了使得r与梯度保持一致避免报错！
                 exp_avg.mul_(beta1).add_(r, alpha=1 - beta1)
                 exp_avg_sq.mul_(beta2).addcmul_(r, r, value=1 - beta2)
                 denom = exp_avg_sq.sqrt().add_(eps)
