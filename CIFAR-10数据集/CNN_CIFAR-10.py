@@ -1,100 +1,103 @@
 import torch
-import numpy as np
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as transforms
+import numpy as np
 import random
 
-# 设置随机种子以确保结果可复现
+# 设置随机种子
 def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(42)  # 设置一个固定的随机种子
+set_seed(42)
 
-# 定义神经网络
+# 数据预处理
+transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+# 加载 CIFAR-10 数据集
+trainset = torchvision.datasets.CIFAR10(root='./', train=True, download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+
+testset = torchvision.datasets.CIFAR10(root='./', train=False, download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
+
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+# 定义简单的 CNN 模型
 class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.fc1 = nn.Linear(64 * 8 * 8, 128)  # 需要根据实际输出调整
-        self.fc2 = nn.Linear(128, 10)
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2)
-        x = x.view(-1, 64 * 8 * 8)  # 调整展平后的维度
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
 
-# IOU 计算函数
-def iou(pred, target, n_classes=10):
-    ious = []
-    pred = torch.argmax(pred, dim=1)
-    for cls in range(n_classes):
-        pred_inds = pred == cls
-        target_inds = target == cls
-        intersection = (pred_inds & target_inds).sum().float().item()
-        union = (pred_inds | target_inds).sum().float().item()
-        if union == 0:
-            ious.append(float('nan'))  # 避免除零错误
-        else:
-            ious.append(intersection / union)
-    return np.nanmean(ious)
+net = SimpleCNN()
 
-# 设置数据加载器
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
-
-train_dataset = datasets.CIFAR10('.', train=True, download=True, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-
-# 初始化模型、损失函数和学习率
-model = SimpleCNN()
+# 定义损失函数
 criterion = nn.CrossEntropyLoss()
 learning_rate = 0.001
 
-# 训练循环
-num_epochs = 100
-for epoch in range(num_epochs):
-    model.train()
-    total_loss = 0
-    total_iou = 0
-    for inputs, targets in train_loader:
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
+# 定义IOU计算函数
+def calculate_iou(outputs, labels):
+    _, predicted = torch.max(outputs.data, 1)
+    intersection = (predicted & labels).float().sum()
+    union = (predicted | labels).float().sum()
+    iou = intersection / union
+    return iou.item()
 
-        # 反向传播计算梯度
-        model.zero_grad()
-        loss.backward()
+# 打开文件以保存指标
+with open("cnn-cifar.txt", "w") as f:
+    # 训练模型
+    for epoch in range(100):  # 训练多个 epoch
+        running_loss = 0.0
+        running_iou = 0.0
+        for i, data in enumerate(trainloader, 0):
+            # 获取输入数据
+            inputs, labels = data
 
-        # 手动更新模型参数
-        with torch.no_grad():
-            for param in model.parameters():
-                param -= learning_rate * param.grad
+            # 零梯度
+            net.zero_grad()
+            outputs = net(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
 
-        total_loss += loss.item()
+            # 手动更新参数
+            with torch.no_grad():
+                for param in net.parameters():
+                    param -= learning_rate * param.grad
 
-        # 计算IOU
-        with torch.no_grad():
-            total_iou += iou(outputs, targets)
+            running_loss += loss.item()
 
-    avg_loss = total_loss / len(train_loader)
-    avg_iou = total_iou / len(train_loader)
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss}, IOU: {avg_iou}')
+            # 计算每个批次的IOU
+            with torch.no_grad():
+                iou = calculate_iou(outputs, labels)
+                running_iou += iou
+        
+        # 计算并保存每个 epoch 的平均损失和 IOU
+        epoch_loss = running_loss / len(trainloader)
+        epoch_iou = running_iou / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
 
-# 保存模型
-torch.save(model.state_dict(), 'model.pth')
+    print('Finished Training')
