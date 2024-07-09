@@ -5,7 +5,7 @@ import torchvision
 import torchvision.transforms as transforms
 import numpy as np
 import random
-from torchvision.datasets import MNIST
+from torchvision.datasets import CIFAR10
 from torch.optim.optimizer import Optimizer
 
 # 设置随机种子
@@ -105,24 +105,24 @@ class LBFGSAdam(Optimizer):
 # 数据预处理
 transform = transforms.Compose(
     [transforms.ToTensor(),
-     transforms.Normalize((0.5,), (0.5,))])
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-# 加载 MNIST 数据集
-trainset = MNIST(root='./data', train=True, download=True, transform=transform)
+# 加载 CIFAR-10 数据集
+trainset = CIFAR10(root='./data', train=True, download=True, transform=transform)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
 
-testset = MNIST(root='./data', train=False, download=True, transform=transform)
+testset = CIFAR10(root='./data', train=False, download=True, transform=transform)
 testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
-classes = ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9')
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 # 定义 LeNet-5 模型
 class LeNet5(nn.Module):
     def __init__(self):
         super(LeNet5, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)
+        self.conv1 = nn.Conv2d(3, 6, 5)  # 输入通道数从1改为3
         self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 4 * 4, 120)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)  # CIFAR-10的输入尺寸是32x32，经过两次池化和卷积后尺寸为5x5
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, 10)
 
@@ -131,7 +131,7 @@ class LeNet5(nn.Module):
         x = F.max_pool2d(x, 2)
         x = F.relu(self.conv2(x))
         x = F.max_pool2d(x, 2)
-        x = x.view(-1, 16 * 4 * 4)
+        x = x.view(-1, 16 * 5 * 5)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
@@ -152,7 +152,7 @@ def calculate_iou(outputs, labels):
     return iou.item()
 
 # 打开文件以保存指标
-with open("lenet5-mnist.txt", "w") as f:
+with open("lenet5-cifar.txt", "w") as f:
     # 训练模型
     for epoch in range(100):  # 训练多个 epoch
         running_loss = 0.0
