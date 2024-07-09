@@ -1,145 +1,82 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as transforms
 import numpy as np
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
 import random
+from torchvision.models import resnet18
 
-# 设置随机种子以确保结果可复现
+# 设置随机种子
 def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(42)  # 设置一个固定的随机种子
+set_seed(42)
 
-class BasicBlock(nn.Module):
-    expansion = 1
+# 数据预处理
+transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super(BasicBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.downsample = downsample
-        self.stride = stride
+# 加载 CIFAR-10 数据集
+trainset = torchvision.datasets.CIFAR10(root='./', train=True, download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
 
-    def forward(self, x):
-        identity = x
+testset = torchvision.datasets.CIFAR10(root='./', train=False, download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-        out = self.conv2(out)
-        out = self.bn2(out)
+# 定义 ResNet-18 模型
+net = resnet18(pretrained=False)
+net.fc = nn.Linear(net.fc.in_features, 10)  # 修改最后一层以适应 CIFAR-10 数据集
 
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out += identity
-        out = self.relu(out)
-
-        return out
-
-class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=10):
-        super(ResNet, self).__init__()
-        self.in_channels = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
-
-    def _make_layer(self, block, out_channels, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.in_channels != out_channels * block.expansion:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.in_channels, out_channels * block.expansion, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.in_channels, out_channels, stride, downsample))
-        self.in_channels = out_channels * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.in_channels, out_channels))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-
-        return x
-
-def resnet18(num_classes):
-    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes)
-
-# 设置数据加载器
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
-
-train_dataset = datasets.CIFAR10('.', train=True, download=True, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-
-# 初始化模型和损失函数
-model = resnet18(num_classes=10)  # CIFAR-10数据集是三通道的
+# 定义损失函数
 criterion = nn.CrossEntropyLoss()
-learning_rate = 0.001
 
-# 训练循环
-num_epochs = 20
-for epoch in range(num_epochs):
-    model.train()
-    total_loss = 0
-    for inputs, targets in train_loader:
-        inputs = inputs.to(torch.float32)
-        targets = targets.to(torch.long)
+# 打开文件以保存指标
+with open("resnet18-cifar-no-optimizer.txt", "w") as f:
+    # 训练模型
+    for epoch in range(100):  # 训练多个 epoch
+        running_loss = 0.0
+        running_iou = 0.0
+        for i, data in enumerate(trainloader, 0):
+            # 获取输入数据
+            inputs, labels = data
 
-        # 前向传播
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
+            # 零梯度
+            net.zero_grad()
 
-        # 反向传播计算梯度
-        model.zero_grad()
-        loss.backward()
+            # 前向传播
+            outputs = net(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
 
-        # 手动更新模型参数
-        with torch.no_grad():
-            for param in model.parameters():
-                param -= learning_rate * param.grad
+            # 手动更新参数
+            with torch.no_grad():
+                for param in net.parameters():
+                    if param.grad is not None:
+                        param -= 0.001 * param.grad  # 这里的0.001是学习率，可以调整
 
-        total_loss += loss.item()
+            running_loss += loss.item()
 
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss / len(train_loader)}')
+            # 计算每个批次的 IOU
+            with torch.no_grad():
+                _, predicted = torch.max(outputs.data, 1)
+                intersection = (predicted == labels).sum().item()
+                union = len(labels)
+                iou = intersection / union
+                running_iou += iou
 
-# 保存模型
-torch.save(model.state_dict(), 'resnet_model.pth')
+        # 计算并保存每个 epoch 的平均损失和 IOU
+        epoch_loss = running_loss / len(trainloader)
+        epoch_iou = running_iou / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
+
+    print('Finished Training')
