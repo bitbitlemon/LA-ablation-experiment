@@ -1,28 +1,28 @@
 import torch
-import numpy as np
-from torch.optim import Optimizer
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
 import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as transforms
+from torch.optim.optimizer import Optimizer
+import numpy as np
 import random
 
-# 设置随机种子以确保结果可复现
+# 设置随机种子
 def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(42)  # 设置一个固定的随机种子
+set_seed(42)
 
 class LBFGSAdam(Optimizer):
-    def __init__(self, params, lr=1e-3, p1=0.9, p2=0.999):
-        defaults = dict(lr=lr, p1=p1, p2=p2)
+    def __init__(self, params, lr=1e-5, betas=(0.9, 0.999), eps=1e-8, history_size=10, max_grad_norm=1.0):
+        defaults = dict(lr=lr, betas=betas, eps=eps, history_size=history_size, max_grad_norm=max_grad_norm)
         super(LBFGSAdam, self).__init__(params, defaults)
 
     def step(self, closure=None):
@@ -31,6 +31,12 @@ class LBFGSAdam(Optimizer):
             loss = closure()
 
         for group in self.param_groups:
+            lr = group['lr']
+            betas = group['betas']
+            eps = group['eps']
+            history_size = group['history_size']
+            max_grad_norm = group['max_grad_norm']
+
             for p in group['params']:
                 if p.grad is None:
                     continue
@@ -40,75 +46,140 @@ class LBFGSAdam(Optimizer):
 
                 if len(state) == 0:
                     state['step'] = 0
-                    state['r'] = torch.zeros_like(p.data)
-                    state['u'] = torch.zeros_like(p.data)
+                    state['exp_avg'] = torch.zeros_like(p.data)
+                    state['exp_avg_sq'] = torch.zeros_like(p.data)
+                    state['old_dirs'] = []
+                    state['old_stps'] = []
 
-                r, u = state['r'], state['u']
-                p1, p2, lr = group['p1'], group['p2'], group['lr']
+                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+                beta1, beta2 = betas
 
                 state['step'] += 1
-                r.mul_(p1).add_(grad, alpha=1 - p1)
-                u.mul_(p2).add_(grad, alpha=1 - p2)
 
-                direction = self.lbfgs_direction(r, u)
-                p.data.add_(direction, alpha=-lr)
+                if state['step'] > 1:
+                    y = grad - state['prev_grad']
+                    s = p.data - state['prev_p_data']
+                    y_flat, s_flat = y.view(-1), s.view(-1)
+                    if y_flat.dot(s_flat) > 1e-10:
+                        if len(state['old_dirs']) >= history_size:
+                            state['old_dirs'].pop(0)
+                            state['old_stps'].pop(0)
+                        state['old_dirs'].append(y_flat)
+                        state['old_stps'].append(s_flat)
+
+                q = grad.view(-1)
+                alphas = []
+                for i in range(len(state['old_dirs']) - 1, -1, -1):
+                    s, y = state['old_stps'][i], state['old_dirs'][i]
+                    alpha = s.dot(q) / (y.dot(s) + eps)
+                    q -= alpha * y
+                    alphas.append(alpha)
+
+                r = q
+                if len(state['old_dirs']) > 0:
+                    s, y = state['old_stps'][-1], state['old_dirs'][-1]
+                    r *= y.dot(s) / (y.dot(y) + eps)
+
+                for i in range(len(state['old_dirs'])):
+                    s, y = state['old_stps'][i], state['old_dirs'][i]
+                    beta = y.dot(r) / (s.dot(y) + eps)
+                    r += s * (alphas.pop() - beta)
+
+                r = r.view_as(grad)
+                exp_avg.mul_(beta1).add_(r, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(r, r, value=1 - beta2)
+                denom = exp_avg_sq.sqrt().add_(eps)
+                step_size = lr / denom
+
+                torch.nn.utils.clip_grad_norm_([p], max_grad_norm)
+
+                with torch.no_grad():
+                    p.data.add_(-step_size * exp_avg)
+
+                state['prev_grad'] = grad.clone()
+                state['prev_p_data'] = p.data.clone()
 
         return loss
 
-    def lbfgs_direction(self, r, u):
-        # 实现LBFGS特定的计算
-        return r + u
+# 数据预处理
+transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-# 定义神经网络
-class CNN(nn.Module):
+# 加载 CIFAR-10 数据集
+trainset = torchvision.datasets.CIFAR10(root='./', train=True, download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+
+testset = torchvision.datasets.CIFAR10(root='./', train=False, download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
+
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+# 定义简单的 CNN 模型
+class SimpleCNN(nn.Module):
     def __init__(self):
-        super(CNN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.fc1 = nn.Linear(64 * 8 * 8, 128)  # 需要根据实际输出调整
-        self.fc2 = nn.Linear(128, 10)
+        super(SimpleCNN, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2)
-        x = x.view(-1, 64 * 8 * 8)  # 调整展平后的维度
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
 
-# 设置数据加载器
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
+net = SimpleCNN()
 
-train_dataset = datasets.CIFAR10('.', train=True, download=True, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-
-# 初始化模型、损失函数和优化器
-model = CNN()
+# 定义损失函数和优化器
 criterion = nn.CrossEntropyLoss()
-optimizer = LBFGSAdam(model.parameters(), lr=0.001)
+optimizer = LBFGSAdam(net.parameters(), lr=0.001)
 
-# 训练循环
-num_epochs = 20
-for epoch in range(num_epochs):
-    model.train()
-    total_loss = 0
-    for inputs, targets in train_loader:
-        def closure():
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            return loss
+# 定义IOU计算函数
+def calculate_iou(outputs, labels):
+    _, predicted = torch.max(outputs.data, 1)
+    intersection = (predicted & labels).float().sum()
+    union = (predicted | labels).float().sum()
+    iou = intersection / union
+    return iou.item()
 
-        loss = optimizer.step(closure)
-        total_loss += loss.item()
+# 打开文件以保存指标
+with open("cnn-la-cifar.txt", "w") as f:
+    # 训练模型
+    for epoch in range(100):  # 训练多个 epoch
+        running_loss = 0.0
+        running_iou = 0.0
+        for i, data in enumerate(trainloader, 0):
+            # 获取输入数据
+            inputs, labels = data
 
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss / len(train_loader)}')
+            # 零梯度
+            def closure():
+                optimizer.zero_grad()
+                outputs = net(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                return loss
 
-# 保存模型
-torch.save(model.state_dict(), 'model.pth')
+            optimizer.step(closure)
+            loss = closure().item()
+            running_loss += loss
+
+            # 计算每个批次的IOU
+            with torch.no_grad():
+                outputs = net(inputs)
+                iou = calculate_iou(outputs, labels)
+                running_iou += iou
+        # 计算并保存每个 epoch 的平均损失和 IOU
+        epoch_loss = running_loss / len(trainloader)
+        epoch_iou = running_iou / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
+
+    print('Finished Training')
