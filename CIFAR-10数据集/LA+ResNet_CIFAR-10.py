@@ -1,110 +1,29 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
+import torchvision.transforms as transforms
 import numpy as np
-from torch.optim import Optimizer
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
 import random
+from torchvision.models import resnet18
+from torch.optim.optimizer import Optimizer
 
-# 设置随机种子以确保结果可复现
+# 设置随机种子
 def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(42)  # 设置一个固定的随机种子
+set_seed(42)
 
-class BasicBlock(nn.Module):
-    expansion = 1
-
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super(BasicBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.downsample = downsample
-        self.stride = stride
-
-    def forward(self, x):
-        identity = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out += identity
-        out = self.relu(out)
-
-        return out
-
-class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=10):
-        super(ResNet, self).__init__()
-        self.in_channels = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
-
-    def _make_layer(self, block, out_channels, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.in_channels != out_channels * block.expansion:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.in_channels, out_channels * block.expansion, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels * block.expansion),
-            )
-
-        layers = []
-        layers.append(block(self.in_channels, out_channels, stride, downsample))
-        self.in_channels = out_channels * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.in_channels, out_channels))
-
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
-
-        return x
-
-def resnet18(num_classes):
-    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes)
-
+# 自定义 LBFGSAdam 优化器
 class LBFGSAdam(Optimizer):
-    def __init__(self, params, lr=1e-3, p1=0.9, p2=0.999):
-        defaults = dict(lr=lr, p1=p1, p2=p2)
+    def __init__(self, params, lr=1e-5, betas=(0.9, 0.999), eps=1e-8, history_size=10, max_grad_norm=1.0):
+        defaults = dict(lr=lr, betas=betas, eps=eps, history_size=history_size, max_grad_norm=max_grad_norm)
         super(LBFGSAdam, self).__init__(params, defaults)
 
     def step(self, closure=None):
@@ -113,6 +32,12 @@ class LBFGSAdam(Optimizer):
             loss = closure()
 
         for group in self.param_groups:
+            lr = group['lr']
+            betas = group['betas']
+            eps = group['eps']
+            history_size = group['history_size']
+            max_grad_norm = group['max_grad_norm']
+
             for p in group['params']:
                 if p.grad is None:
                     continue
@@ -122,58 +47,123 @@ class LBFGSAdam(Optimizer):
 
                 if len(state) == 0:
                     state['step'] = 0
-                    state['r'] = torch.zeros_like(p.data)
-                    state['u'] = torch.zeros_like(p.data)
+                    state['exp_avg'] = torch.zeros_like(p.data)
+                    state['exp_avg_sq'] = torch.zeros_like(p.data)
+                    state['old_dirs'] = []
+                    state['old_stps'] = []
 
-                r, u = state['r'], state['u']
-                p1, p2, lr = group['p1'], group['p2'], group['lr']
+                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
+                beta1, beta2 = betas
 
                 state['step'] += 1
-                r.mul_(p1).add_(grad, alpha=1 - p1)
-                u.mul_(p2).add_(grad, alpha=1 - p2)
 
-                direction = self.lbfgs_direction(r, u)
-                p.data.add_(direction, alpha=-lr)
+                if state['step'] > 1:
+                    y = grad - state['prev_grad']
+                    s = p.data - state['prev_p_data']
+                    y_flat, s_flat = y.view(-1), s.view(-1)
+                    if y_flat.dot(s_flat) > 1e-10:
+                        if len(state['old_dirs']) >= history_size:
+                            state['old_dirs'].pop(0)
+                            state['old_stps'].pop(0)
+                        state['old_dirs'].append(y_flat)
+                        state['old_stps'].append(s_flat)
+
+                q = grad.view(-1)
+                alphas = []
+                for i in range(len(state['old_dirs']) - 1, -1, -1):
+                    s, y = state['old_stps'][i], state['old_dirs'][i]
+                    alpha = s.dot(q) / (y.dot(s) + eps)
+                    q -= alpha * y
+                    alphas.append(alpha)
+
+                r = q
+                if len(state['old_dirs']) > 0:
+                    s, y = state['old_stps'][-1], state['old_dirs'][-1]
+                    r *= y.dot(s) / (y.dot(y) + eps)
+
+                for i in range(len(state['old_dirs'])):
+                    s, y = state['old_stps'][i], state['old_dirs'][i]
+                    beta = y.dot(r) / (s.dot(y) + eps)
+                    r += s * (alphas.pop() - beta)
+
+                r = r.view_as(grad)
+                exp_avg.mul_(beta1).add_(r, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(r, r, value=1 - beta2)
+                denom = exp_avg_sq.sqrt().add_(eps)
+                step_size = lr / denom
+
+                torch.nn.utils.clip_grad_norm_([p], max_grad_norm)
+
+                with torch.no_grad():
+                    p.data.add_(-step_size * exp_avg)
+
+                state['prev_grad'] = grad.clone()
+                state['prev_p_data'] = p.data.clone()
 
         return loss
 
-    def lbfgs_direction(self, r, u):
-        return r + u
+# 数据预处理
+transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-# 设置数据加载器
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
+# 加载 CIFAR-10 数据集
+trainset = torchvision.datasets.CIFAR10(root='./', train=True, download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
 
-train_dataset = datasets.CIFAR10('.', train=True, download=True, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+testset = torchvision.datasets.CIFAR10(root='./', train=False, download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
-# 初始化模型、损失函数和优化器
-model = resnet18(num_classes=10)
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+# 定义 ResNet-18 模型
+net = resnet18(pretrained=False)
+net.fc = nn.Linear(net.fc.in_features, 10)  # 修改最后一层以适应 CIFAR-10 数据集
+
+# 定义损失函数和优化器
 criterion = nn.CrossEntropyLoss()
-optimizer = LBFGSAdam(model.parameters(), lr=0.001)
+optimizer = LBFGSAdam(net.parameters(), lr=0.001)
 
-# 训练循环
-num_epochs = 20
-for epoch in range(num_epochs):
-    model.train()
-    total_loss = 0
-    for inputs, targets in train_loader:
-        inputs = inputs.to(torch.float32)
-        targets = targets.to(torch.long)
+# 定义 IOU 计算函数
+def calculate_iou(outputs, labels):
+    _, predicted = torch.max(outputs.data, 1)
+    intersection = (predicted & labels).float().sum()
+    union = (predicted | labels).float().sum()
+    iou = intersection / union
+    return iou.item()
 
-        def closure():
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            return loss
+# 打开文件以保存指标
+with open("resnet18-cifar-la.txt", "w") as f:
+    # 训练模型
+    for epoch in range(100):  # 训练多个 epoch
+        running_loss = 0.0
+        running_iou = 0.0
+        for i, data in enumerate(trainloader, 0):
+            # 获取输入数据
+            inputs, labels = data
 
-        loss = optimizer.step(closure)
-        total_loss += loss.item()
+            # 零梯度
+            def closure():
+                optimizer.zero_grad()
+                outputs = net(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                return loss
 
-    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {total_loss / len(train_loader)}')
+            optimizer.step(closure)
+            loss = closure().item()
+            running_loss += loss
 
-# 保存模型
-torch.save(model.state_dict(), 'resnet_model.pth')
+            # 计算每个批次的 IOU
+            with torch.no_grad():
+                outputs = net(inputs)
+                iou = calculate_iou(outputs, labels)
+                running_iou += iou
+
+        # 计算并保存每个 epoch 的平均损失和 IOU
+        epoch_loss = running_loss / len(trainloader)
+        epoch_iou = running_iou / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
+
+    print('Finished Training')
