@@ -33,28 +33,142 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False,
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-# 定义 LeNet-5 模型
-class LeNet5(nn.Module):
+# 定义 Enet 模型
+class InitialBlock(nn.Module):
     def __init__(self):
-        super(LeNet5, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)  # 输入通道数从1改为3
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)  # CIFAR-10的输入尺寸是32x32，经过两次池化和卷积后尺寸为5x5
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        super(InitialBlock, self).__init__()
+        self.main_branch = nn.Conv2d(3, 13, kernel_size=3, stride=2, padding=1, bias=False)
+        self.ext_branch = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        self.bn = nn.BatchNorm2d(16)
+        self.prelu = nn.PReLU(16)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.max_pool2d(x, 2)
-        x = F.relu(self.conv2(x))
-        x = F.max_pool2d(x, 2)
-        x = x.view(-1, 16 * 5 * 5)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        main = self.main_branch(x)
+        ext = self.ext_branch(x)
+        out = torch.cat((main, ext), 1)
+        out = self.bn(out)
+        return self.prelu(out)
+
+class RegularBottleneck(nn.Module):
+    def __init__(self, in_channels, inter_channels, kernel_size, padding, dropout_prob, asymmetric):
+        super(RegularBottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, inter_channels, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(inter_channels)
+        self.prelu1 = nn.PReLU(inter_channels)
+        if asymmetric:
+            self.conv2 = nn.Sequential(
+                nn.Conv2d(inter_channels, inter_channels, (kernel_size, 1), padding=(padding, 0), bias=False),
+                nn.Conv2d(inter_channels, inter_channels, (1, kernel_size), padding=(0, padding), bias=False)
+            )
+        else:
+            self.conv2 = nn.Conv2d(inter_channels, inter_channels, kernel_size=kernel_size, padding=padding, bias=False)
+        self.bn2 = nn.BatchNorm2d(inter_channels)
+        self.prelu2 = nn.PReLU(inter_channels)
+        self.conv3 = nn.Conv2d(inter_channels, in_channels, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(in_channels)
+        self.dropout = nn.Dropout2d(dropout_prob)
+        self.prelu3 = nn.PReLU(in_channels)
+        self.out_prelu = nn.PReLU(in_channels)
+
+    def forward(self, x):
+        identity = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.prelu1(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.prelu2(out)
+        out = self.conv3(out)
+        out = self.bn3(out)
+        out = self.dropout(out)
+        out += identity
+        return self.out_prelu(out)
+
+class DownsamplingBottleneck(nn.Module):
+    def __init__(self, in_channels, inter_channels, out_channels):
+        super(DownsamplingBottleneck, self).__init__()
+        self.main_conv = nn.Conv2d(in_channels, out_channels, kernel_size=2, stride=2, bias=False)
+        self.main_bn = nn.BatchNorm2d(out_channels)
+        self.main_prelu = nn.PReLU(out_channels)
+        self.conv1 = nn.Conv2d(in_channels, inter_channels, kernel_size=2, stride=2, bias=False)
+        self.bn1 = nn.BatchNorm2d(inter_channels)
+        self.prelu1 = nn.PReLU(inter_channels)
+        self.conv2 = nn.Conv2d(inter_channels, inter_channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(inter_channels)
+        self.prelu2 = nn.PReLU(inter_channels)
+        self.conv3 = nn.Conv2d(inter_channels, out_channels, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(0.1)
+        self.prelu3 = nn.PReLU(out_channels)
+        self.out_prelu = nn.PReLU(out_channels)
+
+    def forward(self, x):
+        main = self.main_conv(x)
+        main = self.main_bn(main)
+        main = self.main_prelu(main)
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.prelu1(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.prelu2(out)
+        out = self.conv3(out)
+        out = self.bn3(out)
+        out = self.dropout(out)
+        out += main
+        return self.out_prelu(out)
+
+class Enet(nn.Module):
+    def __init__(self, num_classes=10):
+        super(Enet, self).__init__()
+        self.initial_block = InitialBlock()
+        self.bottleneck1_0 = DownsamplingBottleneck(16, 16, 64)
+        self.bottleneck1_1 = RegularBottleneck(64, 16, 3, 1, 0.1, False)
+        self.bottleneck1_2 = RegularBottleneck(64, 16, 3, 1, 0.1, False)
+        self.bottleneck1_3 = RegularBottleneck(64, 16, 3, 1, 0.1, False)
+        self.bottleneck1_4 = RegularBottleneck(64, 16, 3, 1, 0.1, False)
+        self.bottleneck2_0 = DownsamplingBottleneck(64, 32, 128)
+        self.bottleneck2_1 = RegularBottleneck(128, 32, 3, 1, 0.1, False)
+        self.bottleneck2_2 = RegularBottleneck(128, 32, 3, 1, 0.1, True)
+        self.bottleneck2_3 = RegularBottleneck(128, 32, 3, 1, 0.1, False)
+        self.bottleneck2_4 = RegularBottleneck(128, 32, 3, 1, 0.1, True)
+        self.bottleneck2_5 = RegularBottleneck(128, 32, 3, 1, 0.1, False)
+        self.bottleneck2_6 = RegularBottleneck(128, 32, 3, 1, 0.1, True)
+        self.bottleneck2_7 = RegularBottleneck(128, 32, 3, 1, 0.1, False)
+        self.bottleneck2_8 = RegularBottleneck(128, 32, 3, 1, 0.1, True)
+        self.bottleneck2_9 = RegularBottleneck(128, 32, 3, 1, 0.1, False)
+        self.bottleneck2_10 = RegularBottleneck(128, 32, 3, 1, 0.1, True)
+        self.bottleneck2_11 = RegularBottleneck(128, 32, 3, 1, 0.1, False)
+        self.bottleneck3_0 = RegularBottleneck(128, 64, 3, 1, 0.1, False)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        x = self.initial_block(x)
+        x = self.bottleneck1_0(x)
+        x = self.bottleneck1_1(x)
+        x = self.bottleneck1_2(x)
+        x = self.bottleneck1_3(x)
+        x = self.bottleneck1_4(x)
+        x = self.bottleneck2_0(x)
+        x = self.bottleneck2_1(x)
+        x = self.bottleneck2_2(x)
+        x = self.bottleneck2_3(x)
+        x = self.bottleneck2_4(x)
+        x = self.bottleneck2_5(x)
+        x = self.bottleneck2_6(x)
+        x = self.bottleneck2_7(x)
+        x = self.bottleneck2_8(x)
+        x = self.bottleneck2_9(x)
+        x = self.bottleneck2_10(x)
+        x = self.bottleneck2_11(x)
+        x = self.bottleneck3_0(x)
+        x = self.global_avg_pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
         return x
 
-net = LeNet5()
+net = Enet(num_classes=10)
 
 # 定义损失函数
 criterion = nn.CrossEntropyLoss()
@@ -69,7 +183,7 @@ def calculate_iou(outputs, labels):
     return iou.item()
 
 # 打开文件以保存指标
-with open("lenet5-cifar.txt", "w") as f:
+with open("enet-cifar.txt", "w") as f:
     # 训练模型
     for epoch in range(100):  # 训练多个 epoch
         running_loss = 0.0
@@ -87,7 +201,8 @@ with open("lenet5-cifar.txt", "w") as f:
             # 手动更新参数
             with torch.no_grad():
                 for param in net.parameters():
-                    param -= learning_rate * param.grad
+                    if param.grad is not None:
+                        param -= learning_rate * param.grad
 
             running_loss += loss.item()
 
