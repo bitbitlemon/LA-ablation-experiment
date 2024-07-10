@@ -61,11 +61,11 @@ def plot_metrics(filenames):
 
 # Example usage
 filenames = [
-    './ResNet_CIFAR_LA.txt',
-    './CNN_CIFAR_LA.txt',
-    './ENet_CIFAR_LA.txt',
-    './ResNet_CIFAR.txt',
-    './ENet_CIFAR.txt',
-    './CNN_CIFAR.txt'
+    './ResNet_MNIST_LA.txt',
+    './CNN_MNIST_LA.txt',
+    './ENet_MNIST_LA.txt',
+    './ResNet_MNIST.txt',
+    './ENet_MNIST.txt',
+    './CNN_MNIST.txt'
 ]
 plot_metrics(filenames)
