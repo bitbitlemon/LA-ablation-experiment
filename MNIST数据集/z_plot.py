@@ -43,7 +43,7 @@ def plot_metrics(filenames):
     plt.title('Loss over Epochs')
     plt.legend()
     plt.grid(True)
-    plt.savefig('./loss_over_epochs.png')
+    plt.savefig('./loss_MNIST_epochs.png')
     plt.close()
 
     #  IOU
@@ -55,7 +55,7 @@ def plot_metrics(filenames):
     plt.title('IOU over Epochs')
     plt.legend()
     plt.grid(True)
-    plt.savefig('./iou_over_epochs.png')
+    plt.savefig('./iou_MNIST_epochs.png')
     plt.close()
 
 
@@ -64,8 +64,12 @@ filenames = [
     './ResNet_MNIST_LA.txt',
     './CNN_MNIST_LA.txt',
     './ENet_MNIST_LA.txt',
-    './ResNet_MNIST.txt',
-    './ENet_MNIST.txt',
-    './CNN_MNIST.txt'
+    './ResNet_MNIST_ADAM.txt',
+    './ENet_MNIST_ADAM.txt',
+    './CNN_MNIST_ADAM.txt',
+    # './ResNet_MNIST.txt',
+    # './ENet_MNIST.txt',
+    # './CNN_MNIST.txt'
 ]
 plot_metrics(filenames)
+
