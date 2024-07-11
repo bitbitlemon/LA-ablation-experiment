@@ -43,7 +43,7 @@ def plot_metrics(filenames):
     plt.title('Loss over Epochs')
     plt.legend()
     plt.grid(True)
-    plt.savefig('./loss_over_epochs.png')
+    plt.savefig('./loss_CIFAR_epochs.png')
     plt.close()
 
     #  IOU
@@ -55,7 +55,7 @@ def plot_metrics(filenames):
     plt.title('IOU over Epochs')
     plt.legend()
     plt.grid(True)
-    plt.savefig('./iou_over_epochs.png')
+    plt.savefig('./iou_CIFAR_epochs.png')
     plt.close()
 
 
@@ -64,6 +64,9 @@ filenames = [
     './ResNet_CIFAR_LA.txt',
     './CNN_CIFAR_LA.txt',
     './ENet_CIFAR_LA.txt',
+    './ResNet_CIFAR_ADAM.txt',
+    './ENet_CIFAR_ADAM.txt',
+    './CNN_CIFAR_ADAM.txt',
     './ResNet_CIFAR.txt',
     './ENet_CIFAR.txt',
     './CNN_CIFAR.txt'
