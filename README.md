@@ -17,7 +17,7 @@ The project is organized as follows:
 ```
 LA-ablation-experiment-main/
 │
-├── CIFAR-10数据集/
+├── CIFAR-10 datas/
 │   ├── cnn.py                # CNN architecture implementation for CIFAR-10
 │   ├── cnn_adam.py           # CNN + Adam optimizer
 │   ├── cnn_la.py             # CNN + LA optimizer
@@ -29,7 +29,7 @@ LA-ablation-experiment-main/
 │   ├── resnet_la.py          # ResNet + LA optimizer
 │   └── z_plot-10.py          # Plotting results for CIFAR-10 experiments
 │
-├── MNIST数据集/
+├── MNIST dataset/
 │   ├── cnn.py                # CNN architecture implementation for MNIST
 │   ├── cnn_adam.py           # CNN + Adam optimizer
 │   ├── cnn_la.py             # CNN + LA optimizer
@@ -66,10 +66,10 @@ The CIFAR-10 and MNIST datasets are automatically downloaded and handled by PyTo
 
 ### Running Experiments
 
-Each folder (`CIFAR-10数据集` and `MNIST数据集`) contains scripts for training different architectures using various optimizers. You can run the training for each model by executing the corresponding Python script. For example:
+Each folder (`CIFAR-10 dataset` and `MNIST dataset`) contains scripts for training different architectures using various optimizers. You can run the training for each model by executing the corresponding Python script. For example:
 
 ```bash
-python CIFAR-10数据集/cnn_adam.py
+python CIFAR-10 dataset/cnn_adam.py
 ```
 
 This will train a CNN on CIFAR-10 using the Adam optimizer. Similarly, you can run experiments with different models (e.g., ResNet, ENet) and optimizers (e.g., LA, LBFGSAdam).
@@ -92,13 +92,13 @@ The results of each experiment are stored in text files (e.g., `CNN_CIFAR.txt`, 
 To generate plots for CIFAR-10 experiments, run:
 
 ```bash
-python CIFAR-10数据集/z_plot-10.py
+python CIFAR-10 dataset/z_plot-10.py
 ```
 
 For MNIST experiments:
 
 ```bash
-python MNIST数据集/z_plot.py
+python MNIST dataset/z_plot.py
 ```
 
 The plots will be saved as image files in the project directory.
