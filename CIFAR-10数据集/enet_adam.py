@@ -8,7 +8,7 @@ import numpy as np
 import random
 from torchvision.datasets import CIFAR10
 
-# 设置随机种子
+# Set random seed
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -20,7 +20,7 @@ def set_seed(seed):
 
 set_seed(42)
 
-# 定义 Enet 模型
+# Define Enet model
 class InitialBlock(nn.Module):
     def __init__(self):
         super(InitialBlock, self).__init__()
@@ -155,12 +155,12 @@ class Enet(nn.Module):
         x = self.fc(x)
         return x
 
-# 数据预处理
+# Data preprocessing
 transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-# 加载 CIFAR-10 数据集
+# Load CIFAR-10 dataset
 trainset = CIFAR10(root='./', train=True, download=True, transform=transform)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
 
@@ -169,32 +169,32 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False,
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-# 定义 Enet 模型
+# Initialize Enet model
 net = Enet(num_classes=10)
 
-# 定义损失函数和优化器
+# Define loss function and optimizer
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(net.parameters(), lr=0.001)
 
-# 定义 IOU 计算函数
-def calculate_iou(outputs, labels):
+# Define accuracy calculation function
+def calculate_accuracy(outputs, labels):
     _, predicted = torch.max(outputs.data, 1)
-    intersection = (predicted == labels).sum().item()
-    union = len(labels)
-    iou = intersection / union
-    return iou
+    correct = (predicted == labels).sum().item()
+    total = labels.size(0)
+    accuracy = correct / total
+    return accuracy
 
-# 打开文件以保存指标
+# Open file to save metrics
 with open("enet-adam-cifar.txt", "w") as f:
-    # 训练模型
-    for epoch in range(100):  # 训练多个 epoch
+    # Train the model
+    for epoch in range(100):  # Train for multiple epochs
         running_loss = 0.0
-        running_iou = 0.0
+        running_accuracy = 0.0
         for i, data in enumerate(trainloader, 0):
-            # 获取输入数据
+            # Get input data
             inputs, labels = data
 
-            # 零梯度
+            # Zero gradients
             optimizer.zero_grad()
             outputs = net(inputs)
             loss = criterion(outputs, labels)
@@ -203,16 +203,15 @@ with open("enet-adam-cifar.txt", "w") as f:
 
             running_loss += loss.item()
 
-            # 计算每个批次的 IOU
+            # Calculate accuracy for each batch
             with torch.no_grad():
-                outputs = net(inputs)
-                iou = calculate_iou(outputs, labels)
-                running_iou += iou
+                accuracy = calculate_accuracy(outputs, labels)
+                running_accuracy += accuracy
 
-        # 计算并保存每个 epoch 的平均损失和 IOU
+        # Calculate and save average loss and accuracy for each epoch
         epoch_loss = running_loss / len(trainloader)
-        epoch_iou = running_iou / len(trainloader)
-        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
-        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
+        epoch_accuracy = running_accuracy / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}')
 
     print('Finished Training')
