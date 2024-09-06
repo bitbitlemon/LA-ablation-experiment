@@ -58,20 +58,20 @@ net = SimpleCNN()
 criterion = nn.CrossEntropyLoss()
 learning_rate = 0.001
 
-# Define accuracy calculation function
-def calculate_accuracy(outputs, labels):
+# Define IOU calculation function
+def calculate_iou(outputs, labels):
     _, predicted = torch.max(outputs.data, 1)
-    correct = (predicted == labels).sum().item()
-    total = labels.size(0)
-    accuracy = correct / total
-    return accuracy
+    intersection = (predicted & labels).float().sum()
+    union = (predicted | labels).float().sum()
+    iou = intersection / union
+    return iou.item()
 
 # Open a file to save metrics
 with open("cnn-mnist.txt", "w") as f:
     # Train the model
     for epoch in range(100):  # Train for multiple epochs
         running_loss = 0.0
-        running_accuracy = 0.0
+        running_iou = 0.0
         for i, data in enumerate(trainloader, 0):
             # Get input data
             inputs, labels = data
@@ -89,15 +89,15 @@ with open("cnn-mnist.txt", "w") as f:
 
             running_loss += loss.item()
 
-            # Calculate accuracy for each batch
+            # Calculate IOU for each batch
             with torch.no_grad():
-                accuracy = calculate_accuracy(outputs, labels)
-                running_accuracy += accuracy
+                iou = calculate_iou(outputs, labels)
+                running_iou += iou
         
-        # Calculate and save average loss and accuracy for each epoch
+        # Calculate and save average loss and IOU for each epoch
         epoch_loss = running_loss / len(trainloader)
-        epoch_accuracy = running_accuracy / len(trainloader)
-        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}\n')
-        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}')
+        epoch_iou = running_iou / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
 
     print('Finished Training')
