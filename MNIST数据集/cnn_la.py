@@ -8,7 +8,7 @@ from torch.optim.optimizer import Optimizer
 import numpy as np
 import random
 
-# 设置随机种子
+# Set random seed
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -101,12 +101,12 @@ class LBFGSAdam(Optimizer):
 
         return loss
 
-# 数据预处理
+# Data preprocessing
 transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5,), (0.5,))])
 
-# 加载 MNIST 数据集
+# Load MNIST dataset
 trainset = torchvision.datasets.MNIST(root='./', train=True, download=True, transform=transform)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
 
@@ -115,14 +115,14 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False,
 
 classes = ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9')
 
-# 定义简单的 CNN 模型
+# Define a simple CNN model
 class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)  # 输入通道数修改为1
+        self.conv1 = nn.Conv2d(1, 6, 5)  # Input channel changed to 1
         self.pool = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 4 * 4, 120)  # 修改全连接层输入维度
+        self.fc1 = nn.Linear(16 * 4 * 4, 120)  # Adjusted fully connected layer input dimensions
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, 10)
 
@@ -137,29 +137,29 @@ class SimpleCNN(nn.Module):
 
 net = SimpleCNN()
 
-# 定义损失函数和优化器
+# Define loss function and optimizer
 criterion = nn.CrossEntropyLoss()
 optimizer = LBFGSAdam(net.parameters(), lr=0.001)
 
-# 定义IOU计算函数
-def calculate_iou(outputs, labels):
+# Define accuracy calculation function
+def calculate_accuracy(outputs, labels):
     _, predicted = torch.max(outputs.data, 1)
-    intersection = (predicted & labels).float().sum()
-    union = (predicted | labels).float().sum()
-    iou = intersection / union
-    return iou.item()
+    correct = (predicted == labels).sum().item()
+    total = labels.size(0)
+    accuracy = correct / total
+    return accuracy
 
-# 打开文件以保存指标
+# Open a file to save metrics
 with open("cnn-la-mnist.txt", "w") as f:
-    # 训练模型
-    for epoch in range(100):  # 训练多个 epoch
+    # Train the model
+    for epoch in range(100):  # Train for multiple epochs
         running_loss = 0.0
-        running_iou = 0.0
+        running_accuracy = 0.0
         for i, data in enumerate(trainloader, 0):
-            # 获取输入数据
+            # Get input data
             inputs, labels = data
 
-            # 零梯度
+            # Zero gradients
             def closure():
                 optimizer.zero_grad()
                 outputs = net(inputs)
@@ -171,15 +171,15 @@ with open("cnn-la-mnist.txt", "w") as f:
             loss = closure().item()
             running_loss += loss
 
-            # 计算每个批次的IOU
+            # Calculate accuracy for each batch
             with torch.no_grad():
                 outputs = net(inputs)
-                iou = calculate_iou(outputs, labels)
-                running_iou += iou
-        # 计算并保存每个 epoch 的平均损失和 IOU
+                accuracy = calculate_accuracy(outputs, labels)
+                running_accuracy += accuracy
+        # Calculate and save average loss and accuracy for each epoch
         epoch_loss = running_loss / len(trainloader)
-        epoch_iou = running_iou / len(trainloader)
-        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
-        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
+        epoch_accuracy = running_accuracy / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}')
 
     print('Finished Training')
