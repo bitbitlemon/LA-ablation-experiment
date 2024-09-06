@@ -43,7 +43,6 @@ LA-ablation-experiment-main/
 │
 ├── LBFGSAdam.py              # Custom optimizer combining LBFGS and Adam
 ├── .gitattributes            # Git attributes file for repo configuration
-└── README.md                 # This README file
 ```
 
 ## Installation
