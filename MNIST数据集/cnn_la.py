@@ -20,6 +20,7 @@ def set_seed(seed):
 
 set_seed(42)
 
+# Custom LBFGSAdam optimizer
 class LBFGSAdam(Optimizer):
     def __init__(self, params, lr=1e-5, betas=(0.9, 0.999), eps=1e-8, history_size=10, max_grad_norm=1.0):
         defaults = dict(lr=lr, betas=betas, eps=eps, history_size=history_size, max_grad_norm=max_grad_norm)
@@ -141,20 +142,20 @@ net = SimpleCNN()
 criterion = nn.CrossEntropyLoss()
 optimizer = LBFGSAdam(net.parameters(), lr=0.001)
 
-# Define accuracy calculation function
-def calculate_accuracy(outputs, labels):
+# Define IOU calculation function
+def calculate_iou(outputs, labels):
     _, predicted = torch.max(outputs.data, 1)
-    correct = (predicted == labels).sum().item()
-    total = labels.size(0)
-    accuracy = correct / total
-    return accuracy
+    intersection = (predicted == labels).sum().item()
+    union = len(labels)
+    iou = intersection / union
+    return iou
 
 # Open a file to save metrics
 with open("cnn-la-mnist.txt", "w") as f:
     # Train the model
     for epoch in range(100):  # Train for multiple epochs
         running_loss = 0.0
-        running_accuracy = 0.0
+        running_iou = 0.0
         for i, data in enumerate(trainloader, 0):
             # Get input data
             inputs, labels = data
@@ -171,15 +172,15 @@ with open("cnn-la-mnist.txt", "w") as f:
             loss = closure().item()
             running_loss += loss
 
-            # Calculate accuracy for each batch
+            # Calculate IOU for each batch
             with torch.no_grad():
                 outputs = net(inputs)
-                accuracy = calculate_accuracy(outputs, labels)
-                running_accuracy += accuracy
-        # Calculate and save average loss and accuracy for each epoch
+                iou = calculate_iou(outputs, labels)
+                running_iou += iou
+        # Calculate and save average loss and IOU for each epoch
         epoch_loss = running_loss / len(trainloader)
-        epoch_accuracy = running_accuracy / len(trainloader)
-        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}\n')
-        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}')
+        epoch_iou = running_iou / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
 
     print('Finished Training')
