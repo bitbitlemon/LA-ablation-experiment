@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
@@ -37,10 +36,10 @@ classes = ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9')
 class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)  # Input channel changed to 1
+        self.conv1 = nn.Conv2d(1, 6, 5)  # Input channel set to 1
         self.pool = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 4 * 4, 120)  # Adjusted fully connected layer input dimensions
+        self.fc1 = nn.Linear(16 * 4 * 4, 120)  # Adjust fully connected layer input size
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, 10)
 
@@ -55,46 +54,50 @@ class SimpleCNN(nn.Module):
 
 net = SimpleCNN()
 
-# Define loss function and optimizer
+# Define the loss function
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(net.parameters(), lr=0.001)
+learning_rate = 0.001
 
-# Define accuracy calculation function
-def calculate_accuracy(outputs, labels):
+# Define IOU calculation function
+def calculate_iou(outputs, labels):
     _, predicted = torch.max(outputs.data, 1)
-    correct = (predicted == labels).sum().item()
-    total = labels.size(0)
-    accuracy = correct / total
-    return accuracy
+    intersection = (predicted & labels).float().sum()
+    union = (predicted | labels).float().sum()
+    iou = intersection / union
+    return iou.item()
 
 # Open a file to save metrics
-with open("cnn-adam-mnist.txt", "w") as f:
+with open("cnn-mnist.txt", "w") as f:
     # Train the model
     for epoch in range(100):  # Train for multiple epochs
         running_loss = 0.0
-        running_accuracy = 0.0
+        running_iou = 0.0
         for i, data in enumerate(trainloader, 0):
             # Get input data
             inputs, labels = data
 
             # Zero gradients
-            optimizer.zero_grad()
+            net.zero_grad()
             outputs = net(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
-            optimizer.step()
+
+            # Manually update parameters
+            with torch.no_grad():
+                for param in net.parameters():
+                    param -= learning_rate * param.grad
 
             running_loss += loss.item()
 
-            # Calculate accuracy for each batch
+            # Calculate IOU for each batch
             with torch.no_grad():
-                accuracy = calculate_accuracy(outputs, labels)
-                running_accuracy += accuracy
-
-        # Calculate and save average loss and accuracy for each epoch
+                iou = calculate_iou(outputs, labels)
+                running_iou += iou
+        
+        # Calculate and save average loss and IOU for each epoch
         epoch_loss = running_loss / len(trainloader)
-        epoch_accuracy = running_accuracy / len(trainloader)
-        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}\n')
-        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average Accuracy: {epoch_accuracy:.4f}')
+        epoch_iou = running_iou / len(trainloader)
+        f.write(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}\n')
+        print(f'Epoch: {epoch + 1}, Average Loss: {epoch_loss:.6f}, Average IOU: {epoch_iou:.4f}')
 
     print('Finished Training')
